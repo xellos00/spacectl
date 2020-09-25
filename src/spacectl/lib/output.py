@@ -2,9 +2,12 @@ import click
 from tabulate import tabulate
 from spaceone.core import utils
 
+
 def print_data(data, output, **kwargs):
-    if(len(data) == 0):
-        print('NO DATA')
+    if output == 'quiet':
+        _print_quiet(data, **kwargs)
+    elif len(data) == 0:
+        echo('NO DATA')
     elif output == 'table':
         _print_table(data, **kwargs)
     elif output == 'json':
@@ -19,7 +22,6 @@ def _print_table(data, **kwargs):
         del kwargs['root_key']
     headers = kwargs.get('headers', 'keys')
     total_count = kwargs.get('total_count')
-
     if isinstance(data, dict):
         _print_yaml(data)
     else:
@@ -47,3 +49,22 @@ def _print_yaml(data, **kwargs):
     else:
         click.echo('---')
         click.echo(utils.dump_yaml(data))
+
+
+def _print_quiet(data, **kwargs):
+    results = data["results"]
+    for result in results:
+        items = list(result.values())
+        if len(items) > 1:
+            click.echo("Please Selector only one column for quiet output.", err=True)
+            exit(1)
+        values = list(map(str, items))
+        click.echo(" ".join(values), nl=False)
+    click.echo()
+
+
+def echo(message, flag=True, err=False, terminate=False):
+    if flag:
+        click.echo(message, err=err)
+    if terminate:
+        exit(1)

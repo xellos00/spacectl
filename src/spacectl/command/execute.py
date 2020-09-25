@@ -7,7 +7,7 @@ from spaceone.core import pygrpc
 from spaceone.core.utils import parse_endpoint, load_json, load_yaml_from_file
 
 from spacectl.lib.output import print_data
-from spacectl.conf.global_conf import RESOURCE_ALIAS, EXCLUDE_APIS, DEFAULT_ENVIRONMENT, DEFAULT_PARSER
+from spacectl.conf.global_conf import RESOURCE_ALIAS, EXCLUDE_APIS, DEFAULT_PARSER
 from spacectl.conf.my_conf import get_config, get_endpoint, get_template
 
 __all__ = ['cli']
@@ -46,7 +46,7 @@ def get(resource, parameter, json_parameter, file_path, api_version, output):
 @click.option('-s', '--sort', help="Sorting by given key (-s [-]<key>)")
 @click.option('-v', '--api-version', default='v1', help='API Version', show_default=True)
 @click.option('-o', '--output', default='table', help='Output format',
-              type=click.Choice(['table', 'json', 'yaml']), show_default=True)
+              type=click.Choice(['table', 'json', 'yaml', 'quiet']), show_default=True)
 def list(resource, parameter, json_parameter, file_path, minimal_columns, all_columns, columns, template_path,
          limit, sort, api_version, output):
     """Display one or many resources"""
@@ -159,9 +159,8 @@ def _parse_parameter(file_parameter=None, json_parameter=None, parameter=[]):
 
 def _execute_api(service, resource, verb, params={}, api_version='v1', output='yaml', parser=None):
     config = get_config()
-    env = config.get('environment')
     _check_api_permissions(service, resource, verb)
-    client = _get_client(service, api_version, env)
+    client = _get_client(service, api_version)
     response = _call_api(client, resource, verb, params, config=config)
 
     if verb == 'list' and parser:
@@ -205,14 +204,11 @@ def _get_service_and_resource(resource):
         return resource_split[0], resource_split[1]
 
 
-def _get_client(service, api_version, env):
-    if env is None:
-        raise Exception('The environment of spaceconfig is not set. (Use "spacectl config init")')
-
-    endpoint = get_endpoint(env, service)
+def _get_client(service, api_version):
+    endpoint = get_endpoint(service)
 
     if endpoint is None:
-        raise Exception(f'Endpoint is not set. (environment={env}, service={service})')
+        raise Exception(f'Endpoint is not set. (service={service})')
 
     try:
         e = parse_endpoint(endpoint)
@@ -221,6 +217,8 @@ def _get_client(service, api_version, env):
         client.service = service
         client.api_version = api_version
         return client
+    except ERROR_BASE as e:
+        raise e
     except Exception:
         raise ValueError(f'Endpoint is invalid. (endpoint={endpoint})')
 
@@ -234,23 +232,30 @@ def _check_resource_and_verb(client, resource, verb):
 
 
 def _call_api(client, resource, verb, params={}, **kwargs):
-    config = kwargs.get('config', {})
-    if 'api_key' not in config:
-        raise Exception('The api_key of spaceconfig is not set. (Use "spacectl config init")')
-
     _check_resource_and_verb(client, resource, verb)
 
-    api_key = config['api_key']
-    params['domain_id'] = config.get('domain_id')
+    config = kwargs.get('config', {})
+    api_key = config.get('api_key')
+    domain_id = config.get('domain_id')
+
+    if domain_id:
+        params['domain_id'] = config.get('domain_id')
 
     try:
-        message = getattr(getattr(client, resource), verb)(
+        metadata = (()) if api_key == None else (('token', api_key),)
+        resource_client = getattr(client, resource)
+        resource_verb = getattr(resource_client, verb)
+        message = resource_verb(
             params,
-            metadata=(('token', api_key),)
+            metadata = metadata
         )
+
         return _change_message(message)
     except ERROR_BASE as e:
-        raise Exception(e.message.strip())
+        if e.error_code == 'ERROR_AUTHENTICATE_FAILURE':
+            raise Exception('The api_key of spaceconfig is not set. (Use "spacectl config init")')
+        else:
+            raise Exception(e.message.strip())
     except Exception as e:
         raise Exception(e)
 
